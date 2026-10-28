@@ -3,6 +3,19 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+/// A `latest` request picks the newest entry; two builds of one release
+/// differ only after the `+`, which `Versioning` ignores, so the build
+/// metadata decides, numerically rather than as text.
+#[test]
+fn cmp_lockfile_versions_newest_first_orders_build_metadata_numerically() {
+    let mut versions = ["25.0.4+7.0.LTS", "25.0.4+101.0.LTS", "25.0.4+36.0.LTS"];
+    versions.sort_by(|a, b| super::cmp_lockfile_versions_newest_first(a, b));
+    assert_eq!(
+        versions,
+        ["25.0.4+101.0.LTS", "25.0.4+36.0.LTS", "25.0.4+7.0.LTS"]
+    );
+}
+
 #[test]
 fn test_retain_unsuperseded_unbound_entries() {
     let tool = |version: &str, backend: &str, specifiers: &[&str]| LockfileTool {

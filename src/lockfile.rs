@@ -16,6 +16,7 @@ use crate::file;
 use crate::file::display_path;
 use crate::path::PathExt;
 use crate::platform::Platform;
+use crate::semver::build_metadata_segments;
 use crate::toolset::{ToolRequest, ToolSource, ToolVersion, ToolVersionOptions, Toolset};
 use eyre::{Report, Result, bail, eyre};
 use indexmap::IndexSet;
@@ -5778,8 +5779,9 @@ fn matching_request_bindings<'a>(
 /// The version string is a tie-break, not decoration. It guarantees a
 /// deterministic order when a parser considers distinct opaque versions
 /// equivalent. This originally worked around `versions` v7 treating `3.7b`
-/// and `3.7c` as equal (fosskers/rs-versions#39); `install_state` breaks ties
-/// the same way.
+/// and `3.7c` as equal (fosskers/rs-versions#39). Build metadata, which every
+/// parser ignores, is compared first and numerically, so `+101` follows `+7`;
+/// `install_state::sort_versions` breaks ties the same way.
 ///
 /// Two identical strings still compare `Equal`, which leaves the stable sort to
 /// keep duplicate entries in the order they were read.
@@ -5797,7 +5799,11 @@ fn matching_request_bindings<'a>(
 ///   for a pair of `1.9b` and `1.10b`. Where it does order, `Versioning` agrees
 ///   with it: `Versioning::new` reaches for `SemVer` first.
 fn cmp_lockfile_versions_newest_first(a: &str, b: &str) -> std::cmp::Ordering {
-    (versions::Versioning::new(b), b).cmp(&(versions::Versioning::new(a), a))
+    (versions::Versioning::new(b), build_metadata_segments(b), b).cmp(&(
+        versions::Versioning::new(a),
+        build_metadata_segments(a),
+        a,
+    ))
 }
 
 fn select_unbound_lockfile_tool<'a>(

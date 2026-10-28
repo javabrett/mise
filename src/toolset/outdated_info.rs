@@ -1,4 +1,6 @@
-use crate::semver::{chunkify_version, semver_precedence_cmp, split_version_prefix};
+use crate::semver::{
+    build_metadata_numeric_cmp, chunkify_version, semver_precedence_cmp, split_version_prefix,
+};
 use crate::toolset;
 use crate::toolset::{ResolveOptions, ToolRequest, ToolSource, ToolVersion};
 use crate::{Result, backend::ABackend, config::Config};
@@ -498,16 +500,29 @@ fn numeric_components(v: &str) -> Option<Vec<u64>> {
 /// Checks whether the current version is older than a backend-selected candidate.
 /// Uses SemVer precedence when possible, then the general version comparison;
 /// versions that cannot be ordered are considered outdated when they differ.
+/// Both orderings ignore build metadata, so a version they call equal is
+/// outdated only when its build number is smaller.
 pub fn is_outdated_version(current: &str, latest: &str) -> bool {
     if let Some(ordering) = semver_precedence_cmp(current, latest) {
-        return ordering == Ordering::Less;
+        return is_older(ordering, current, latest);
     }
     if let (Some(c), Some(l)) = (Version::new(current), Version::new(latest)) {
-        c.lt(&l)
+        is_older(c.cmp(&l), current, latest)
     } else if let (Some(c), Some(l)) = (numeric_components(current), numeric_components(latest)) {
         c < l
     } else {
         current != latest
+    }
+}
+
+/// `current` is older than `latest` given how an ordering that ignores
+/// build metadata ranked them: a tie goes to a numerically greater build
+/// (`+7.0.LTS` against `+101.0.LTS`), never to text that merely differs.
+fn is_older(ordering: Ordering, current: &str, latest: &str) -> bool {
+    match ordering {
+        Ordering::Less => true,
+        Ordering::Equal => build_metadata_numeric_cmp(current, latest) == Some(Ordering::Less),
+        Ordering::Greater => false,
     }
 }
 
@@ -561,6 +576,42 @@ mod tests {
             is_outdated_version("temurin-17.0.1", "temurin-17.0.0"),
             false
         );
+    }
+
+    /// Build metadata is not precedence, so a version both orderings call
+    /// equal is outdated only on a numerically greater build. Text that
+    /// differs, or metadata on one side only, is not evidence of a newer one.
+    #[test]
+    fn test_is_outdated_version_build_metadata() {
+        // prefixed: `versions::Version` path
+        assert_eq!(
+            is_outdated_version("temurin-25.0.4+7.0.LTS", "temurin-25.0.4+101.0.LTS"),
+            true
+        );
+        assert_eq!(
+            is_outdated_version("temurin-25.0.4+101.0.LTS", "temurin-25.0.4+7.0.LTS"),
+            false
+        );
+        // unprefixed: SemVer precedence path
+        assert_eq!(
+            is_outdated_version("25.0.4+7.0.LTS", "25.0.4+101.0.LTS"),
+            true
+        );
+        assert_eq!(
+            is_outdated_version("25.0.4+101.0.LTS", "25.0.4+7.0.LTS"),
+            false
+        );
+        assert_eq!(
+            is_outdated_version("25.0.4+7.0.LTS", "25.0.4+7.1.LTS"),
+            true
+        );
+        assert_eq!(
+            is_outdated_version("25.0.4+7.0.LTS", "25.0.4+7.0.LTS"),
+            false
+        );
+        assert_eq!(is_outdated_version("1.2.3+7", "1.2.3"), false);
+        assert_eq!(is_outdated_version("1.2.3", "1.2.3+7"), false);
+        assert_eq!(is_outdated_version("v1.2.3+one", "1.2.3+two"), false);
     }
 
     #[test]

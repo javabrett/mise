@@ -322,12 +322,13 @@ fn pin_target(
 
 /// List real (non-symlink) installed versions in a specific directory.
 fn installed_versions_in_dir(backend: &Arc<dyn Backend>, installs_dir: &Path) -> Vec<String> {
-    real_installs_in_dir(installs_dir)
+    let mut versions = real_installs_in_dir(installs_dir)
         .into_iter()
         .filter(|v| !is_install_incomplete(backend, installs_dir, v))
         .filter(|v| !VERSION_REGEX.is_match(v) && !backend.is_backend_prerelease(v))
-        .sorted_by_cached_key(|v| (Versioning::new(v), v.to_string()))
-        .collect()
+        .collect_vec();
+    install_state::sort_versions(&mut versions);
+    versions
 }
 
 /// Whether version dir `v` belongs to an install that never finished. The
@@ -678,6 +679,24 @@ mod tests {
         assert_eq!(
             installed_versions_in_dir(&backend, &installs_dir),
             ["1.2.4"]
+        );
+        Ok(())
+    }
+
+    /// `Versioning` ignores build metadata, so `+101` and `+7` compared equal
+    /// and the text tie-break put `+101` first; the rebuild lets the last
+    /// entry win every generated name, so `latest` named the older build.
+    #[test]
+    fn installed_versions_in_dir_orders_build_metadata_numerically() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let installs_dir = temp_dir.path().join("installs").join("npm-happy");
+        fs::create_dir_all(installs_dir.join("25.0.4+101.0.LTS"))?;
+        fs::create_dir_all(installs_dir.join("25.0.4+7.0.LTS"))?;
+        let backend = npm_test_backend();
+
+        assert_eq!(
+            installed_versions_in_dir(&backend, &installs_dir),
+            ["25.0.4+7.0.LTS", "25.0.4+101.0.LTS"]
         );
         Ok(())
     }

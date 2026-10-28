@@ -174,14 +174,101 @@ pub fn semver_is_at_least(version: &str, minimum: &str) -> Option<bool> {
     Some(semver_cmp(version, minimum)? != Ordering::Less)
 }
 
+/// One `.`-separated segment of the build metadata after a version's `+`.
+///
+/// Numbers order before text and compare as numbers, so build `101` follows
+/// build `7` instead of preceding it as text.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum BuildMetadataSegment {
+    Number(u64),
+    Text(String),
+}
+
+/// The build metadata of `v`, segment by segment; empty when there is none.
+///
+/// `Versioning` ignores everything after `+`, so this is the tie-break for
+/// versions it calls equal, such as Java's `temurin-25.0.4+7.0.LTS` and
+/// `temurin-25.0.4+101.0.LTS`.
+pub fn build_metadata_segments(v: &str) -> Vec<BuildMetadataSegment> {
+    let Some((_, meta)) = v.split_once('+') else {
+        return vec![];
+    };
+    meta.split('.')
+        .map(|seg| match seg.parse::<u64>() {
+            Ok(n) => BuildMetadataSegment::Number(n),
+            Err(_) => BuildMetadataSegment::Text(seg.to_string()),
+        })
+        .collect()
+}
+
+/// How `a`'s build metadata orders against `b`'s, where that can be told.
+///
+/// Decided by the first segments that differ, and only when both are
+/// numbers: `+7.0.LTS` is `Less` than `+101.0.LTS`. Text that differs
+/// (`+one` against `+two`), metadata on one side only, or no difference at
+/// all is no evidence of a newer build, so that is `None`.
+/// [`build_metadata_segments`] is the total order for sorting; this is the
+/// strict subset an upgrade check can act on.
+pub fn build_metadata_numeric_cmp(a: &str, b: &str) -> Option<Ordering> {
+    let (a, b) = (build_metadata_segments(a), build_metadata_segments(b));
+    let (x, y) = a.iter().zip(&b).find(|(x, y)| x != y)?;
+    match (x, y) {
+        (BuildMetadataSegment::Number(x), BuildMetadataSegment::Number(y)) => Some(x.cmp(y)),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
+        BuildMetadataSegment, build_metadata_numeric_cmp, build_metadata_segments,
         chunkify_version, is_npm_semver_range_query, npm_semver_range_filter, semver_cmp,
         semver_is_at_least, semver_is_older_than, semver_precedence_cmp, semver_triplet,
         split_version_prefix,
     };
     use std::cmp::Ordering;
+
+    #[test]
+    fn test_build_metadata_segments() {
+        assert_eq!(
+            build_metadata_segments("25.0.4"),
+            Vec::<BuildMetadataSegment>::new()
+        );
+        assert_eq!(
+            build_metadata_segments("temurin-25.0.4+7.0.LTS"),
+            vec![
+                BuildMetadataSegment::Number(7),
+                BuildMetadataSegment::Number(0),
+                BuildMetadataSegment::Text("LTS".to_string()),
+            ]
+        );
+        // numbers compare as numbers, and before text
+        assert!(build_metadata_segments("1+7") < build_metadata_segments("1+101"));
+        assert!(build_metadata_segments("1+7") < build_metadata_segments("1+k3s1"));
+    }
+
+    /// Only a numeric difference says which build is newer; everything else
+    /// is left to the caller's "same version" default.
+    #[test]
+    fn test_build_metadata_numeric_cmp() {
+        assert_eq!(
+            build_metadata_numeric_cmp("temurin-25.0.4+7.0.LTS", "temurin-25.0.4+101.0.LTS"),
+            Some(Ordering::Less)
+        );
+        assert_eq!(
+            build_metadata_numeric_cmp("25.0.4+101.0.LTS", "25.0.4+7.0.LTS"),
+            Some(Ordering::Greater)
+        );
+        assert_eq!(
+            build_metadata_numeric_cmp("25.0.4+7.0.LTS", "25.0.4+7.1.LTS"),
+            Some(Ordering::Less)
+        );
+        assert_eq!(build_metadata_numeric_cmp("1.2.3+one", "1.2.3+two"), None);
+        assert_eq!(build_metadata_numeric_cmp("1.2.3+7", "1.2.3"), None);
+        assert_eq!(build_metadata_numeric_cmp("1.2.3", "1.2.3+7"), None);
+        assert_eq!(build_metadata_numeric_cmp("1.2.3+7", "1.2.3+7.1"), None);
+        assert_eq!(build_metadata_numeric_cmp("1.2.3+7", "1.2.3+7"), None);
+    }
 
     #[test]
     fn test_split_version_prefix() {

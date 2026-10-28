@@ -19,6 +19,7 @@ use crate::config::project::{effective_requests, nearest_project_tool_requests, 
 use crate::env;
 use crate::file;
 use crate::runtime_symlinks::is_runtime_symlink;
+use crate::semver::build_metadata_segments;
 use crate::toolset::{ToolRequestSet, ToolSource, ToolVersion, Toolset};
 use crate::ui::table::MiseTable;
 
@@ -482,6 +483,7 @@ impl Ls {
                 (
                     plugin_name.clone(),
                     Versioning::new(version),
+                    build_metadata_segments(version),
                     version.clone(),
                 )
             })
@@ -534,6 +536,7 @@ impl Ls {
                 (
                     plugin_name.clone(),
                     Versioning::new(version),
+                    build_metadata_segments(version),
                     version.clone(),
                 )
             })

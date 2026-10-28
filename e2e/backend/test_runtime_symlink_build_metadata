@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# Two builds of one release differ only after `+`, which `Versioning` ignores,
+# so the rebuild ordered them as text (`+101` before `+7`) and the last one won
+# every generated link: `temurin-25`, `temurin-latest` and, for installs
+# without a vendor prefix, `latest` all named the older build.
+
+PLUGIN_DIR="$MISE_DATA_DIR/plugins/buildmeta"
+mkdir -p "$PLUGIN_DIR/bin"
+
+cat <<'LISTALL' >"$PLUGIN_DIR/bin/list-all"
+#!/usr/bin/env bash
+echo "25.0.4+7.0.LTS 25.0.4+101.0.LTS temurin-25.0.4+7.0.LTS temurin-25.0.4+101.0.LTS"
+LISTALL
+chmod +x "$PLUGIN_DIR/bin/list-all"
+
+cat <<'INSTALL' >"$PLUGIN_DIR/bin/install"
+#!/usr/bin/env bash
+mkdir -p "$ASDF_INSTALL_PATH/bin"
+printf '#!/usr/bin/env bash\necho "buildmeta %s"\n' "$ASDF_INSTALL_VERSION" \
+  >"$ASDF_INSTALL_PATH/bin/buildmeta"
+chmod +x "$ASDF_INSTALL_PATH/bin/buildmeta"
+INSTALL
+chmod +x "$PLUGIN_DIR/bin/install"
+
+INSTALLS="$MISE_DATA_DIR/installs/buildmeta"
+
+# the newer build first, so the text order (`+101` < `+7`) is what the
+# second install's rebuild acts on
+mise install buildmeta@temurin-25.0.4+101.0.LTS
+mise install buildmeta@temurin-25.0.4+7.0.LTS
+
+assert "readlink $INSTALLS/temurin-25" "./temurin-25.0.4+101.0.LTS"
+assert "readlink $INSTALLS/temurin-25.0" "./temurin-25.0.4+101.0.LTS"
+assert "readlink $INSTALLS/temurin-latest" "./temurin-25.0.4+101.0.LTS"
+
+mise install buildmeta@25.0.4+101.0.LTS
+mise install buildmeta@25.0.4+7.0.LTS
+
+assert "readlink $INSTALLS/25" "./25.0.4+101.0.LTS"
+assert "readlink $INSTALLS/25.0" "./25.0.4+101.0.LTS"
+assert "readlink $INSTALLS/latest" "./25.0.4+101.0.LTS"
+# `latest` resolves through that link before it falls back to a scan
+assert "MISE_OFFLINE=1 mise where buildmeta@latest" "$INSTALLS/25.0.4+101.0.LTS"
